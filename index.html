@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Handwriting Improvement App</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Courgette" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            margin: 20px 0;
+            touch-action: none; /* Prevents touch gestures interfering */
+        }
+        #stats {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1 style="font-family: Courgette">Handwriting Improvement</h1>
+    <p>Write a letter in the canvas below using your device's touchscreen.</p>
+    <canvas id="handwritingCanvas" width="400" height="400"></canvas>
+    <br>
+    <button id="clearButton">Clear</button>
+    <button id="submitButton">Submit</button>
+    <div id="stats">
+        <h2>Statistics</h2>
+        <p id="incorrectStats">No data yet.</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("handwritingCanvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        let drawing = false;
+        let handwritingData = "";
+        const incorrectLetters = {}; // Tracks incorrect letters
+        const correctLetters = {}; // Tracks incorrect letters
+        let overflownLetters = {};
+        let letterBoxes = [];
+        let letterDrawn = [];
+        let selectedWord = "";
+        const possibleLetters = "abcdefghijklmnopqrstuvwxyz";
+
+        const words = [
+            "cat", "dog", "sun", "hat", "bat",
+            "run", "bug", "hug", "car", "bus",
+            "red", "hop", "top", "box",
+            "fox", "cup", "bed", "pen", "zip"
+        ];
+
+        document.fonts.ready.then(() => {
+            resetBoard();
+        });
+
+
+        // Start Drawing
+        canvas.addEventListener("pointerdown", function(e) {
+            drawing = true;
+            ctx.beginPath();
+            ctx.moveTo(e.offsetX, e.offsetY);
+        });
+
+        canvas.addEventListener("pointermove", function(e) {
+            if (!drawing) return;
+
+            ctx.strokeStyle = "blue";
+            ctx.lineWidth = 10;
+            const x = e.offsetX;
+            const y = e.offsetY;
+
+            let letterIndex = 0;
+            for (const box of letterBoxes) {
+                if (
+                    x >= box.x &&
+                    x <= box.x + box.width &&
+                    y >= box.y &&
+                    y <= box.y + box.height
+                ) {
+                    letterDrawn[letterIndex] = true;
+                    if (isOverflownLetter(x, y)) {
+                        overflownLetters[box.letter] = (overflownLetters[box.letter] || 0) + 1;
+                    }
+                }
+                letterIndex++;
+            }
+
+            // Draw the user's stroke
+            ctx.lineTo(x, y);
+            ctx.stroke();
+        });
+
+        function isOverflownLetter(x, y) {
+            const pixel = ctx.getImageData(x, y, 1, 1).data;
+            const [r, g, b, a] = pixel;
+            return (r >= 235 && r <= 245 && g >= 235 && g <= 245 && b >= 230 && b <= 245);
+        }
+
+
+
+        // Stop Drawing
+        canvas.addEventListener("pointerup", function() {
+            drawing = false;
+            handwritingData = canvas.toDataURL(); // Save the handwriting data
+        });
+
+        // Prevent accidental scrolling on touch devices
+        canvas.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+        canvas.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+        // Clear the Canvas
+        document.getElementById("clearButton").addEventListener("click", function() {
+            resetBoard();
+        });
+
+        // Submit the Handwriting for Evaluation
+        document.getElementById("submitButton").addEventListener("click", function() {
+            let allDrawn = true;
+            for(let i=0; i<selectedWord.length; i++) {
+                if (!letterDrawn[i]) {
+                    allDrawn = false;
+                    break;
+                }
+            }
+            if (!handwritingData || !allDrawn) {
+                alert("Please write all letters first!");
+                return;
+            }
+
+
+            const emptynessThreashold = 0.3;
+            for (let i = 0; i < selectedWord.length; i++) {
+                const letter = selectedWord[i];
+                const box = letterBoxes[i]; // match letterBoxes[i] to selectedWord[i]
+
+                const fill = getFillRatio(ctx, box);
+                if (fill < emptynessThreashold) {
+                    overflownLetters[letter] = (overflownLetters[letter] || 0) + 1;
+                }
+            }
+
+            for (const letter in overflownLetters) {
+                const count = overflownLetters[letter];
+                if (count > 0) {
+                    incorrectLetters[letter] = (incorrectLetters[letter] || 0) + 1;
+                }
+            }
+            for (const letter of selectedWord) {
+                if (!overflownLetters[letter]) {
+                    correctLetters[letter] = (correctLetters[letter] || 0) + 1;
+                }
+            }
+            updateStatistics();
+            let correctlyRecognized = "";
+            for (const letter of selectedWord) {
+                if (!overflownLetters[letter]) {
+                    correctlyRecognized += letter + ", ";
+                }
+            }
+            let incorrectlyRecognized = "";
+            for (const letter in overflownLetters) {
+                if (overflownLetters[letter]) {
+                    incorrectlyRecognized += letter + ", ";
+                }
+            }
+            let recognitionResult = `Correctly recognized letters: ${correctlyRecognized.slice(0, -2)}\nIncorrectly recognized letters: ${incorrectlyRecognized.slice(0, -2)}`;
+            if (incorrectlyRecognized.length === 0) {
+                recognitionResult = "All letters were recognized correctly!";
+            } else if (correctlyRecognized.length === 0) {
+                recognitionResult = "No letters were recognized correctly!";
+            }
+            alert(recognitionResult);
+            resetBoard();
+        });
+
+        function getFillRatio(ctx, box) {
+            const imageData = ctx.getImageData(box.x, box.y, box.width, box.height);
+            const data = imageData.data;
+            let emptyPixelsCount = 0;
+            let filledPixelsCount = 0;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const a = data[i + 3];
+
+                // Skip transparent pixels
+                if (a === 0) continue;
+
+                // Loosely identify red and blue pixels
+                if (r > 250 && g > 250 && b > 250) emptyPixelsCount++;
+                else if (b > 180 && r < 100 && g < 100) filledPixelsCount++;
+            }
+
+            const total = emptyPixelsCount + filledPixelsCount;
+            return total > 0 ? filledPixelsCount / total : 0;
+        }
+
+
+        function resetBoard() {
+            overflownLetters = {};
+            letterDrawn = [];
+            selectedWord = words[Math.floor(Math.random() * words.length)];
+
+            writeWord(selectedWord);
+
+            const boxes = getLetterBounds(ctx, selectedWord);
+            letterBoxes = boxes;
+            // boxes.forEach(box => {
+            //     // Optional: visualize the box
+            //     ctx.strokeStyle = "red";
+            //     ctx.lineWidth = 1;
+            //     ctx.strokeRect(box.x, box.y, box.width, box.height);
+            // });
+        }
+
+        // Update the Statistics Section
+        function updateStatistics() {
+            const statsDiv = document.getElementById("incorrectStats");
+            if (Object.keys(incorrectLetters).length === 0 && Object.keys(correctLetters).length === 0) {
+                statsDiv.textContent = "No data yet.";
+                return;
+            }
+
+            const result = [];
+            let totalCorrect = 0;
+            let totalMistakes = 0;
+            for(let letter of possibleLetters) {
+                if (incorrectLetters[letter] || correctLetters[letter]) {
+                    const numMistakes = incorrectLetters[letter] || 0;
+                    const numCorrect = correctLetters[letter] || 0;
+                    result.push(`${letter}: ${numMistakes} mistake(s), ${numCorrect} correct matches`)
+                    totalCorrect += numCorrect;
+                    totalMistakes += numMistakes;
+                }
+            }
+            const stats = result.join('<br>') + `<hr>Overall accuracy ${((totalCorrect*100)/(totalCorrect+totalMistakes)).toFixed(1)}%`;
+            statsDiv.innerHTML = stats;
+        }
+
+
+
+
+        const fontSize = "150";
+        const fontFamily = "'Courgette'";
+        const letterSpacing = 50;
+
+        function writeWord(word) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Background
+            ctx.fillStyle = "#f0f0f0";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.font = `${fontSize}px ${fontFamily}`;
+            ctx.textBaseline = "middle";
+            ctx.textAlign = "left";
+
+            // Measure total word width with custom spacing
+            let totalWidth = 0;
+            for (let i = 0; i < word.length; i++) {
+                totalWidth += ctx.measureText(word[i]).width + letterSpacing;
+            }
+
+            const startX = (canvas.width - totalWidth + letterSpacing) / 2;
+            const centerY = canvas.height / 2;
+
+            let x = startX;
+
+            for (let i = 0; i < word.length; i++) {
+                const letter = word[i];
+
+                // Outline
+                ctx.strokeStyle = "red";
+                ctx.lineWidth = 20;
+                ctx.strokeText(letter, x, centerY);
+
+                // Fill
+                ctx.fillStyle = "white";
+                ctx.fillText(letter, x, centerY);
+
+                // Advance cursor
+                x += ctx.measureText(letter).width + letterSpacing;
+            }
+        }
+
+        function getLetterBounds(ctx, word) {
+            ctx.font = `${fontSize}px ${fontFamily}`;
+            ctx.textBaseline = "middle";
+            ctx.textAlign = "left";
+
+            // Compute total width *including* spacing
+            let totalWidth = 0;
+            const letterWidths = [];
+            for (let i = 0; i < word.length; i++) {
+                const width = ctx.measureText(word[i]).width;
+                letterWidths.push(width);
+                totalWidth += width;
+            }
+            totalWidth += letterSpacing * (word.length - 1); // only between letters
+
+            // Start X so it's centered
+            let x = (canvas.width - totalWidth) / 2;
+
+            const boxes = [];
+
+            for (let i = 0; i < word.length; i++) {
+                const letter = word[i];
+                const metrics = ctx.measureText(letter);
+
+                const width = metrics.width;
+                const left = x;
+                const top = (canvas.height / 2) - metrics.actualBoundingBoxAscent;
+                const height = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+
+                boxes.push({
+                    letter,
+                    x: left-25,
+                    y: top-25,
+                    width: width+50,
+                    height: height+50,
+                    metrics
+                });
+
+                x += width + letterSpacing;
+            }
+
+            return boxes;
+        }
+
+
+    </script>
+</body>
+</html>
